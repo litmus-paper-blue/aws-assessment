@@ -13,8 +13,9 @@
 # ─────────────────────────────────────────────────────────────────
 set -euo pipefail
 
-USER_POOL_ID=$(terraform output -raw cognito_user_pool_id)
-TEST_EMAIL=$(terraform output -raw test_email 2>/dev/null || echo "${TEST_EMAIL:?Set TEST_EMAIL env var}")
+USER_POOL_ID="${COGNITO_USER_POOL_ID:-$(terraform output -raw cognito_user_pool_id 2>/dev/null)}"
+USER_POOL_ID="${USER_POOL_ID:?Set COGNITO_USER_POOL_ID env var or run from Terraform directory}"
+TEST_EMAIL="${TEST_EMAIL:?Set TEST_EMAIL env var}"
 PASSWORD="${TEST_PASSWORD:-TestPass1!}"
 
 echo "Setting password for ${TEST_EMAIL} in pool ${USER_POOL_ID}..."

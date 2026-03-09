@@ -124,22 +124,32 @@ terraform plan
 terraform apply
 ```
 
-After apply, set the test user's password (one-time):
+After apply, set the test user's password (one-time). The Cognito user itself is created by Terraform declaratively via `aws_cognito_user`, but Terraform doesn't support setting passwords — so this bootstrap script handles it separately, keeping the apply path clean and deterministic.
+
+If you're running locally with Terraform state available:
 
 ```bash
 ./scripts/create_test_user.sh
 ```
 
-The Cognito user is created by Terraform declaratively. The password is set via this bootstrap script because Terraform's `aws_cognito_user` resource doesn't support setting passwords — this keeps the apply path clean and deterministic.
+If state is remote (e.g. deployed via pipeline), pass the values as env vars:
+
+```bash
+COGNITO_USER_POOL_ID="us-east-1_xxxxx" \
+TEST_EMAIL="your-email@example.com" \
+./scripts/create_test_user.sh
+```
 
 ## Running the Tests
+
+The test script tries to read Terraform outputs automatically. If state is local, this just works:
 
 ```bash
 pip install -r scripts/requirements.txt
 TEST_EMAIL="your-email@example.com" python3 scripts/test_deployment.py
 ```
 
-It auto-detects API URLs and Cognito config from Terraform outputs when run from the project root. If you're running it from somewhere else:
+If state is remote (deployed via pipeline), export the values first. You can grab them from the pipeline apply logs or the AWS console:
 
 ```bash
 export COGNITO_USER_POOL_ID="us-east-1_xxxxx"
@@ -148,6 +158,7 @@ export API_URL_US_EAST_1="https://xxxxx.execute-api.us-east-1.amazonaws.com"
 export API_URL_EU_WEST_1="https://xxxxx.execute-api.eu-west-1.amazonaws.com"
 export TEST_EMAIL="your-email@example.com"
 export TEST_PASSWORD="TestPass1!"
+python3 scripts/test_deployment.py
 ```
 
 The script:

@@ -1,0 +1,215 @@
+###############################################################################
+# CI/CD Pipeline - Unleash Live AWS Assessment
+#
+# Flow:
+#   Pull Request → Lint, Validate, Security Scan, Plan (posted to PR)
+#   Merge to main → Apply + Integration Tests
+###############################################################################
+
+name: Deploy Infrastructure
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  TF_VERSION: "1.9.0"
+  PYTHON_VERSION: "3.12"
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+  security-events: write  # For SARIF upload
+
+jobs:
+  # ─── PR Gate: Lint & Validate ─────────────────────────────────────────────
+  lint-validate:
+    name: Lint & Validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform Format Check
+        run: terraform fmt -check -recursive -diff
+
+      - name: Terraform Init
+        run: terraform init -backend=false
+
+      - name: Terraform Validate
+        run: terraform validate
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Lint Python code
+        run: |
+          pip install ruff
+          ruff check scripts/ lambda/
+
+  # ─── PR Gate: Security Scan ───────────────────────────────────────────────
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    needs: lint-validate
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run tfsec (fail on HIGH/CRITICAL)
+        uses: aquasecurity/tfsec-action@v1.0.3
+        with:
+          soft_fail: false
+          additional_args: --minimum-severity HIGH
+
+      - name: Run checkov
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: .
+          framework: terraform
+          soft_fail: true
+          output_format: sarif
+          output_file_path: checkov.sarif
+          quiet: true
+
+      - name: Upload checkov results to GitHub Security
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: checkov.sarif
+          category: checkov
+
+  # ─── PR Gate: Terraform Plan ──────────────────────────────────────────────
+  plan:
+    name: Terraform Plan
+    runs-on: ubuntu-latest
+    needs: security-scan
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform Init
+        run: terraform init
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+      - name: Terraform Plan
+        run: |
+          terraform plan \
+            -var="test_email=${{ secrets.TEST_EMAIL }}" \
+            -var="candidate_repo=https://github.com/${{ github.repository }}" \
+            -out=tfplan \
+            -no-color
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+      - name: Post Plan to PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { execSync } = require('child_process');
+            const plan = execSync('terraform show -no-color tfplan').toString();
+            const truncated = plan.length > 60000
+              ? plan.substring(0, 60000) + '\n... (truncated)'
+              : plan;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## Terraform Plan\n\`\`\`\n${truncated}\n\`\`\``
+            });
+
+  # ─── Main Only: Deploy ────────────────────────────────────────────────────
+  deploy:
+    name: Deploy
+    runs-on: ubuntu-latest
+    needs: plan
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment: production
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform Init
+        run: terraform init
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+      - name: Terraform Apply
+        run: |
+          terraform apply \
+            -var="test_email=${{ secrets.TEST_EMAIL }}" \
+            -var="candidate_repo=https://github.com/${{ github.repository }}" \
+            -auto-approve
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+  # ─── Main Only: Integration Tests (post-deploy) ──────────────────────────
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: deploy
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install test dependencies
+        run: pip install -r scripts/requirements.txt
+
+      # ┌──────────────────────────────────────────────────────────────────┐
+      # │ PLACEHOLDER: In production, the step below would execute the    │
+      # │ test script with real AWS credentials to validate the deploy.   │
+      # │ For this assessment, AWS creds are not provided to the runner.  │
+      # └──────────────────────────────────────────────────────────────────┘
+      - name: Run integration tests (placeholder)
+        run: |
+          echo "================================================"
+          echo "INTEGRATION TEST STEP"
+          echo "================================================"
+          echo "In production, this step runs:"
+          echo "  python scripts/test_deployment.py"
+          echo ""
+          echo "The script authenticates with Cognito, calls"
+          echo "/greet and /dispatch in both regions concurrently,"
+          echo "asserts region correctness, and measures latency."
+          echo ""
+          echo "Required secrets:"
+          echo "  - AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY"
+          echo "  - TEST_EMAIL / TEST_PASSWORD"
+          echo "================================================"
+          # Uncomment when AWS credentials are available:
+          # python scripts/test_deployment.py
+        env:
+          TEST_EMAIL: ${{ secrets.TEST_EMAIL }}
+          TEST_PASSWORD: ${{ secrets.TEST_PASSWORD }}

@@ -17,7 +17,7 @@ permissions:
   security-events: write  # For SARIF upload
 
 jobs:
-  # ─── PR Gate: Lint & Validate ─────────────────────────────────────────────
+  # ─── PR Gate: Lint & Validate ─────────────────
   lint-validate:
     name: Lint & Validate
     runs-on: ubuntu-latest

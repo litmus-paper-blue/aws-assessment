@@ -211,7 +211,7 @@ def print_summary(results: list):
     # Latency comparison
     greet_results = [r for r in results if r["label"].startswith("greet")]
     if len(greet_results) == 2:
-        print(f"\n  Latency Comparison (/greet):")
+        print("\n  Latency Comparison (/greet):")
         for r in greet_results:
             print(f"    {r['label']}: {r['latency_ms']} ms")
         diff = abs(greet_results[0]["latency_ms"] - greet_results[1]["latency_ms"])

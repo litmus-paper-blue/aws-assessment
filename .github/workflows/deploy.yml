@@ -1,11 +1,3 @@
-###############################################################################
-# CI/CD Pipeline - Unleash Live AWS Assessment
-#
-# Flow:
-#   Pull Request → Lint, Validate, Security Scan, Plan (posted to PR)
-#   Merge to main → Apply + Integration Tests
-###############################################################################
-
 name: Deploy Infrastructure
 
 on:
